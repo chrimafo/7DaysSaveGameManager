@@ -6,8 +6,12 @@
 #include <string.h>
 #include <tchar.h>
 #include <tinyxml2.h>
+#include <filesystem>
+#include <ctime>
+#include <boost/date_time/posix_time/posix_time.hpp>
 
 using namespace std;
+namespace fs = std::filesystem;
 
 // The main window class name.
 static TCHAR szWindowClass[] = _T("7 Days to die Save Game Manager");
@@ -149,8 +153,80 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 void SaveLastPlayedGame()
 {
-    tinyxml2::XMLDocument doc;
-    doc.LoadFile(R"(C:\Users\chrim\AppData\Roaming\7DaysToDie\Saves\NitroGenMap8\NitroGenMap8\players.xml)");
-    const char* lastLogin = doc.FirstChildElement("persistentplayerdata")->FirstChildElement("player")->FindAttribute("lastlogin")->Value();
-    MessageBoxA(NULL, lastLogin, "Last Login", MB_OK | MB_ICONEXCLAMATION);
+    string newestGame = "";
+    string newestWorld = "";
+    string newestGameName = "";
+    tm newestTime{};
+
+    char* pValue;
+    size_t len;
+    errno_t err = _dupenv_s(&pValue, &len, "APPDATA");
+    string appdataPath = string(pValue);
+    fs::path basePath{ (appdataPath + string("\\7DaysToDie\\Saves")).c_str() };
+
+    for (const auto& world : fs::directory_iterator(basePath))
+    {
+        const auto folderName = world.path().filename().string();
+        if (world.is_directory())
+        {
+            for (const auto& game : fs::directory_iterator(world.path()))
+            {
+                if (!game.is_directory() || game.path().filename().string()._Equal("Saves") || game.path().filename().string()._Equal("Deaths"))
+                {
+                    continue;
+                }
+                for (const auto& file : fs::directory_iterator(game.path()))
+                {
+                    if (file.is_directory() || !file.path().filename().string()._Equal("players.xml"))
+                    {
+                        continue;
+                    }
+
+                    // load save time
+                    tinyxml2::XMLDocument doc;
+                    doc.LoadFile(file.path().string().c_str());
+                    const char* lastLogin = doc.FirstChildElement("persistentplayerdata")->FirstChildElement("player")->FindAttribute("lastlogin")->Value();
+                    tm currentTime = boost::posix_time::to_tm(boost::posix_time::time_from_string(lastLogin));
+                    if (newestGame.empty() || difftime(mktime(&currentTime), mktime(&newestTime)) > 0.0)
+                    {
+                        newestTime = currentTime;
+                        newestGame = game.path().string();
+                        newestWorld = world.path().string();
+                        newestGameName = game.path().filename().string();
+                    }
+                }
+            }
+        }
+    }
+
+    // find latest save game
+    string newestGameSavesFolder = newestWorld + string("\\Saves");
+    fs::path savesFolder{ newestGameSavesFolder.c_str() };
+    int newestSaveGame = 0;
+
+    for (const auto& world : fs::directory_iterator(savesFolder))
+    {
+        const auto folderName = world.path().filename().string();
+        if (folderName.find(newestGameName) != string::npos)
+        {
+            try
+            {
+                int saveNumber = stoi(folderName.substr(newestGameName.length() + 1));
+                if (saveNumber > newestSaveGame)
+                {
+                    newestSaveGame = saveNumber;
+                }
+            }
+            catch(exception &_)
+            {
+                
+            }
+        }
+    }
+
+    // save folder to next free spot
+    fs::path targetFolder{ savesFolder.string() + string("\\") + string(newestGameName) + string("_") + to_string(newestSaveGame + 1) };
+    fs::copy(newestGame, targetFolder, fs::copy_options::recursive);
+    
+    MessageBox(NULL, _T("Successfully saved progress"), _T("Success"), MB_OK);
 }
