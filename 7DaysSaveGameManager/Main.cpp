@@ -20,11 +20,13 @@ static TCHAR szTitle[] = _T("7 Days to die Save Game Manager");
 // The handles
 HINSTANCE hInst;
 // The IDs
-constexpr auto ID_BTN = 0;
+constexpr auto ID_BTN_SAVE = 0;
+constexpr auto ID_BTN_RESTORE = 1;
 
 // Forward declarations of functions included in this code module:
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void SaveLastPlayedGame();
+void RestoreLastPlayedGame();
 
 
 int CALLBACK WinMain(
@@ -64,7 +66,7 @@ _In_ int       nCmdShow
     RECT desktop;
     SystemParametersInfo(SPI_GETWORKAREA, 0, &desktop, 0);
     const int width = 200 + GetSystemMetrics(SM_CXSIZEFRAME) * 2;
-    const int height = 82 + GetSystemMetrics(SM_CYSIZEFRAME) * 2 + GetSystemMetrics(SM_CYCAPTION);
+    const int height = 139 + GetSystemMetrics(SM_CYSIZEFRAME) * 2 + GetSystemMetrics(SM_CYCAPTION);
     HWND hWnd = CreateWindow(
         szWindowClass,
         szTitle,
@@ -89,7 +91,7 @@ _In_ int       nCmdShow
         return 1;
     }
 
-    HWND hwndButton = CreateWindow(
+    CreateWindow(
         L"BUTTON",
         L"Save last played",
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
@@ -98,7 +100,20 @@ _In_ int       nCmdShow
         150 - GetSystemMetrics(SM_CXSIZEFRAME) * 2,
         32 - GetSystemMetrics(SM_CYSIZEFRAME) * 2,
         hWnd,
-        (HMENU)ID_BTN,
+        (HMENU)ID_BTN_SAVE,
+        (HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE),
+        NULL);
+
+    CreateWindow(
+        L"BUTTON",
+        L"Restore last played",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+        25,
+        82,
+        150 - GetSystemMetrics(SM_CXSIZEFRAME) * 2,
+        32 - GetSystemMetrics(SM_CYSIZEFRAME) * 2,
+        hWnd,
+        (HMENU)ID_BTN_RESTORE,
         (HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE),
         NULL);
 
@@ -137,8 +152,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             iMID = LOWORD(wParam);
             switch (iMID)
             {
-            case ID_BTN:
+            case ID_BTN_SAVE:
                 SaveLastPlayedGame();
+                break;
+            case ID_BTN_RESTORE:
+                RestoreLastPlayedGame();
                 break;
             }
         }
@@ -231,5 +249,89 @@ void SaveLastPlayedGame()
     string message{ "Successfully saved progress for " };
     message.append(newestGameName);
     
+    MessageBoxA(NULL, message.c_str(), "Success", MB_OK);
+}
+
+void RestoreLastPlayedGame()
+{
+    string newestGame = "";
+    string newestWorld = "";
+    string newestGameName = "";
+    tm newestTime{};
+
+    char* pValue;
+    size_t len;
+    errno_t err = _dupenv_s(&pValue, &len, "APPDATA");
+    string appdataPath = string(pValue);
+    fs::path basePath{ (appdataPath + string("\\7DaysToDie\\Saves")).c_str() };
+
+    for (const auto& world : fs::directory_iterator(basePath))
+    {
+        const auto folderName = world.path().filename().string();
+        if (world.is_directory())
+        {
+            for (const auto& game : fs::directory_iterator(world.path()))
+            {
+                if (!game.is_directory() || game.path().filename().string()._Equal("Saves") || game.path().filename().string()._Equal("Deaths"))
+                {
+                    continue;
+                }
+                for (const auto& file : fs::directory_iterator(game.path()))
+                {
+                    if (file.is_directory() || !file.path().filename().string()._Equal("players.xml"))
+                    {
+                        continue;
+                    }
+
+                    // load save time
+                    tinyxml2::XMLDocument doc;
+                    doc.LoadFile(file.path().string().c_str());
+                    const char* lastLogin = doc.FirstChildElement("persistentplayerdata")->FirstChildElement("player")->FindAttribute("lastlogin")->Value();
+                    tm currentTime = boost::posix_time::to_tm(boost::posix_time::time_from_string(lastLogin));
+                    if (newestGame.empty() || difftime(mktime(&currentTime), mktime(&newestTime)) > 0.0)
+                    {
+                        newestTime = currentTime;
+                        newestGame = game.path().string();
+                        newestWorld = world.path().string();
+                        newestGameName = game.path().filename().string();
+                    }
+                }
+            }
+        }
+    }
+
+    // find latest save game
+    string newestGameSavesFolder = newestWorld + string("\\Saves");
+    fs::path savesFolder{ newestGameSavesFolder.c_str() };
+    int newestSaveGame = 0;
+
+    for (const auto& world : fs::directory_iterator(savesFolder))
+    {
+        const auto folderName = world.path().filename().string();
+        if (folderName.find(newestGameName) != string::npos)
+        {
+            try
+            {
+                int saveNumber = stoi(folderName.substr(newestGameName.length() + 1));
+                if (saveNumber > newestSaveGame)
+                {
+                    newestSaveGame = saveNumber;
+                }
+            }
+            catch (exception& _)
+            {
+
+            }
+        }
+    }
+
+    // save folder to next free spot
+    fs::path sourceFolder{ savesFolder.string() + string("\\") + newestGameName + string("_") + to_string(newestSaveGame) };
+    fs::remove_all(newestGame);
+    fs::copy(sourceFolder, newestGame, fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+
+    string message{ "Successfully restored progress for " };
+    message.append(newestGameName);
+
     MessageBoxA(NULL, message.c_str(), "Success", MB_OK);
 }
