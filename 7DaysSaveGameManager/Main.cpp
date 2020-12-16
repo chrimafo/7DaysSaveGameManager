@@ -225,8 +225,11 @@ void SaveLastPlayedGame()
     }
 
     // save folder to next free spot
-    fs::path targetFolder{ savesFolder.string() + string("\\") + string(newestGameName) + string("_") + to_string(newestSaveGame + 1) };
+    fs::path targetFolder{ savesFolder.string() + string("\\") + newestGameName + string("_") + to_string(newestSaveGame + 1) };
     fs::copy(newestGame, targetFolder, fs::copy_options::recursive);
+
+    string message{ "Successfully saved progress for " };
+    message.append(newestGameName);
     
-    MessageBox(NULL, _T("Successfully saved progress"), _T("Success"), MB_OK);
+    MessageBoxA(NULL, message.c_str(), "Success", MB_OK);
 }
